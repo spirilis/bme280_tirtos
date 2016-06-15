@@ -32,10 +32,13 @@
 /* XDCtools Header files */
 #include <xdc/std.h>
 #include <xdc/runtime/System.h>
+#include <xdc/runtime/Error.h>
 
 /* BIOS Header files */
 #include <ti/sysbios/BIOS.h>
 #include <ti/sysbios/knl/Task.h>
+#include <ti/sysbios/knl/Clock.h>
+#include <ti/sysbios/knl/Semaphore.h>
 
 /* TI-RTOS Header files */
 #include <ti/drivers/I2C.h>
@@ -43,12 +46,12 @@
 #include "bme280.h"
 
 
-/// @brief Local persistent copy of the I2C Handle passed during BME280_init()
-static I2C_Handle i2cbus;
-/// @brief Local persistent copy of the I2C slave address specified during BME280_init()
-static Uint8 i2cAddr;
-/// @brief Local persistent copy of the BME280's unique calibration values discovered during BME280_open()
-static Uint8 _bme280_calibration[33];
+static I2C_Handle i2cbus;  /// @brief Local persistent copy of the I2C Handle passed during BME280_init()
+static Uint8 i2cAddr;  /// @brief Local persistent copy of the I2C slave address specified during BME280_init()
+static Uint8 _bme280_calibration[33];  /// @brief Local persistent copy of the BME280's unique calibration values discovered during BME280_open()
+static Uint8 _bme280_ctrl_meas;  /// @brief Local copy of CTRL_MEAS settings, to save current OSRS params when modifying CTRL_MEAS:mode[]
+static Clock_Handle _bme280_periodic_clock; /// @brief Current TI-RTOS Clock task instance servicing periodic ticks
+static Semaphore_Handle _bme280_periodic_semaphore; /// @brief Binary semaphore used to signal BME280 measurement tick
 
 /// @brief Driver initialization
 /// @details Performed by user with a known-valid I2C_Handle and slave address
@@ -95,14 +98,21 @@ Bool BME280_open()
 	txn.readCount = 6;
 	I2C_transfer(i2cbus, &txn);
 
+	BME280_writeReg(BME280_REG_CTRL_HUM, BME280_CTRL_HUM_OSRS__4);                // defaults we're using
+	_bme280_ctrl_meas = BME280_CTRL_MEAS_OSRS_T__4 | BME280_CTRL_MEAS_OSRS_P__4;  //
+	BME280_writeReg(BME280_REG_CTRL_MEAS, _bme280_ctrl_meas | BME280_CTRL_MEAS_MODE_SLEEP);
+
+	_bme280_periodic_clock = NULL;
+	_bme280_periodic_semaphore = NULL;
 	return true;
 }
 
-/// @brief Will put the BME280 into sleep mode
+/// @brief Reset chip
 Bool BME280_close()
 {
-	// nothing actually to do here
-	// TODO: Actually, we should put CTRL_MEAS:mode[] bits into SLEEP mode in case it's set to NORMAL.
+	BME280_stop();  // Stop running Clock task if applicable
+	BME280_writeReg(BME280_REG_RESET, BME280_RESET_ASSERT);
+	_bme280_ctrl_meas = 0;
 	return true;
 }
 
@@ -196,8 +206,15 @@ Uint32 BME280_readWord20(Uint8 memAddress)
 static BME280_RawData _rawData;
 
 /// @brief Collect current data
+/// @details This will first poll the STATUS register to ascertain no measurements are in progress; if they are, it
+///          will perform Task_sleep(2) and poll again.  Since this uses Task_sleep(), this function must ALWAYS
+///          be run within Task context e.g. not within a Swi or a Clock callback.
 BME280_RawData * BME280_readMeasurements()
 {
+	while (BME280_readReg(BME280_REG_STATUS) & (BME280_STATUS_MEASURING | BME280_STATUS_IM_UPDATE)) {
+		Task_sleep(2);  // Poll every 2ms until complete
+	}
+
 	I2C_Transaction txn;
 	Uint8 regAddr = BME280_REG_PRESSURE;
 	Uint8 rdBuf[8];
@@ -219,17 +236,91 @@ BME280_RawData * BME280_readMeasurements()
 }
 
 /// @brief Initiate a Forced measurement, poll to completion, read & return raw data
-/// @details Runs BME280 in Forced mode with 4x oversampling, no IIR filter on Pressure.
+/// @details By default after BME280_open(), measurement is 4x oversampling, no IIR filter on Pressure.
 BME280_RawData * BME280_read()
 {
-	BME280_writeReg(BME280_REG_CTRL_HUM, BME280_CTRL_HUM_OSRS__4);
-	BME280_writeReg(BME280_REG_CTRL_MEAS, BME280_CTRL_MEAS_MODE_FORCED | BME280_CTRL_MEAS_OSRS_T__4 | BME280_CTRL_MEAS_OSRS_P__4);
-
-	while (BME280_readReg(BME280_REG_STATUS) & (BME280_STATUS_MEASURING | BME280_STATUS_IM_UPDATE)) {
-		Task_sleep(100);  // Poll every 100ms until complete
-	}
+	BME280_writeReg(BME280_REG_CTRL_MEAS, BME280_CTRL_MEAS_MODE_FORCED | _bme280_ctrl_meas);
 
 	return BME280_readMeasurements();
+}
+
+/// @brief TI-RTOS Clock_FuncPtr used for NORMAL mode
+/// @details This is the RTOS Clock task callback which posts the semaphore which must be polled by
+///          the user's task to determine when it's OK to read the BME280.
+Void BME280_RTOS_Clock_Callback(UArg arg0)
+{
+	if (_bme280_periodic_semaphore == NULL) {
+		return;
+	}
+	Semaphore_post(_bme280_periodic_semaphore);
+}
+
+/// @brief Initiate Normal (periodic) measurement mode
+/// @details Normal mode is enabled with the specified periodicity, and a Semaphore_Handle is returned
+///          which must be pend'ed to synchronize BME280 measurement reads.
+Semaphore_Handle BME280_periodic(BME280_Period pd)
+{
+	// Set t_standby
+	Uint8 cfg = BME280_readReg(BME280_REG_CONFIG);
+	BME280_writeReg( BME280_REG_CONFIG, (cfg & ~0xE0) | (Uint8)pd );
+
+	// Activate NORMAL mode
+	BME280_writeReg( BME280_REG_CTRL_MEAS, _bme280_ctrl_meas | BME280_CTRL_MEAS_MODE_NORMAL );
+
+	// Configure TI-RTOS periodic clock, create semaphore
+	Clock_Params cParam;
+	Semaphore_Params sParam;
+	Error_Block eb;
+
+	Semaphore_Params_init(&sParam);
+	sParam.mode = Semaphore_Mode_BINARY;
+
+	Clock_Params_init(&cParam);
+	cParam.period = BME280_period_to_millis(pd);
+	cParam.startFlag = true;
+	Error_init(&eb);
+
+	_bme280_periodic_semaphore = Semaphore_create(0, &sParam, &eb);
+	if (_bme280_periodic_semaphore == NULL) {
+		System_printf("ERROR creating binary semaphore: ");
+		Error_print(&eb);
+		System_printf("\r\n");
+		System_flush();
+		return NULL;
+	}
+
+	_bme280_periodic_clock = Clock_create((Clock_FuncPtr)BME280_RTOS_Clock_Callback, cParam.period, &cParam, &eb);
+	if (_bme280_periodic_clock == NULL) {
+		System_printf("ERROR creating BME280 Periodic Task: ");
+		Error_print(&eb);
+		System_printf("\r\n");
+		System_flush();
+		Semaphore_delete(&_bme280_periodic_semaphore);
+		return NULL;
+	}
+	return _bme280_periodic_semaphore;
+}
+
+/// @brief Halt periodic operation
+/// @details This brings the chip out of NORMAL mode and back to sleep mode.
+///          Any periodic TI-RTOS clocking used to poll the device after its periodic
+///          measurements will be stopped.
+Void BME280_stop()
+{
+	if (_bme280_periodic_clock == NULL)
+		return;
+
+	// Stop TI-RTOS periodic callback clock
+	Clock_stop(_bme280_periodic_clock);
+
+	// Activate SLEEP mode
+	BME280_writeReg( BME280_REG_CTRL_MEAS, _bme280_ctrl_meas | BME280_CTRL_MEAS_MODE_SLEEP );
+
+	// Clean up TI-RTOS clock instance
+	Clock_delete(&_bme280_periodic_clock);
+	Semaphore_delete(&_bme280_periodic_semaphore);
+	_bme280_periodic_clock = NULL;
+	_bme280_periodic_semaphore = NULL;
 }
 
 /* Calibration positions */

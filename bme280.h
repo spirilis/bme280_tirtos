@@ -35,6 +35,7 @@
 
 /* Bosch Sensortec BME280 API using TI Drivers I2C */
 #include <ti/drivers/I2C.h>
+#include <ti/sysbios/knl/Semaphore.h>
 
 /// @brief Default I2C Slave address for the BME280
 #define BOSCH_SENSORTEC_BME280_I2CSLAVE_DEFAULT 0x77
@@ -51,11 +52,19 @@ typedef struct {
 	Uint32 pressure_raw;
 } BME280_RawData;
 
+/// @brief Callback function for BME280_periodic() mode (see bottom of this header)
+typedef void(*BME280_Callback)(BME280_RawData *);
+
 /* Basic API */
 Void BME280_init(I2C_Handle, Uint8 slaveaddr); /// @brief Driver initialization
 Bool BME280_open();                            /// @brief Make contact with the chip and read calibration registers
-Bool BME280_close();                           /// @brief Will put the BME280 into sleep mode
+Bool BME280_close();                           /// @brief Reset chip
 BME280_RawData *BME280_read();                 /// @brief Initiate a Forced measurement, poll to completion, read & return raw data
+/// @brief Collect current data
+/// @details This will first poll the STATUS register to ascertain no measurements are in progress; if they are, it
+///          will perform Task_sleep(2) and poll again.  Since this uses Task_sleep(), this function must ALWAYS
+///          be run within Task context e.g. not within a Swi or a Clock callback.
+BME280_RawData *BME280_readMeasurements();
 
 /* Numeric interpretation/compensation API for extracting results */
 
@@ -73,6 +82,7 @@ Uint32 BME280_compensated_Pressure(BME280_RawData *);
 /// @details Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
 Uint32 BME280_compensated_Humidity(BME280_RawData *);
 
+/* Look at the bottom of this header file for the Periodic Polling API. */
 
 
 /* Internal API */
@@ -81,7 +91,6 @@ Void BME280_writeReg(Uint8 memAddress, Uint8 value);
 Uint8 BME280_readReg(Uint8 memAddress);
 Uint16 BME280_readWord(Uint8 memAddress); // Interprets Big-Endian format of the BME280
 Uint32 BME280_readWord20(Uint8 memAddress); // Interprets Big-Endian with four LSB bits present in MSB of last byte
-BME280_RawData *BME280_readMeasurements();
 
 
 /* Register defines and constants from BME280 datasheet */
@@ -154,5 +163,43 @@ BME280_RawData *BME280_readMeasurements();
 #define BME280_CONFIG_STANDBY_TIME__10      (6 << 5)
 #define BME280_CONFIG_STANDBY_TIME__20      (7 << 5)
 
+#define BME280_RESET_ASSERT (0xB6)
+
+/// @brief Enum for available periodic sensing timeframes
+typedef enum {
+	BME280_EVERY_62_5MS = BME280_CONFIG_STANDBY_TIME__62_5,
+	BME280_EVERY_125MS = BME280_CONFIG_STANDBY_TIME__125,
+	BME280_EVERY_250MS = BME280_CONFIG_STANDBY_TIME__250,
+	BME280_EVERY_500MS = BME280_CONFIG_STANDBY_TIME__500,
+	BME280_EVERY_1000MS = BME280_CONFIG_STANDBY_TIME__1000,
+	BME280_EVERY_10MS = BME280_CONFIG_STANDBY_TIME__10,
+	BME280_EVERY_20MS = BME280_CONFIG_STANDBY_TIME__20
+} BME280_Period;
+
+/// @brief Used internally to resolve BME280_Period enum to millisecond count
+inline static Uint16 BME280_period_to_millis(BME280_Period p) {
+	switch (p) {
+	case BME280_EVERY_62_5MS:
+		return 63;
+	case BME280_EVERY_125MS:
+		return 125;
+	case BME280_EVERY_250MS:
+		return 250;
+	case BME280_EVERY_500MS:
+		return 500;
+	case BME280_EVERY_1000MS:
+		return 1000;
+	case BME280_EVERY_10MS:
+		return 10;
+	case BME280_EVERY_20MS:
+		return 20;
+	default:
+		return 0;
+	}
+}
+
+/* Periodic "NORMAL" mode API */
+Semaphore_Handle BME280_periodic(BME280_Period);  /// @brief Initiate Normal (periodic) measurement mode
+Void BME280_stop();                               /// @brief Halt periodic operation
 
 #endif /* BME280_H_ */
