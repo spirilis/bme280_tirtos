@@ -1,11 +1,32 @@
 /*
- * bme280.c
+ * @file bme280.c
+ * @brief BME280 Library Code
+ * @headerfile <bme280.h>
+ * @details Bosch Sensortec BME280 driver library for TI-RTOS using I2C bus
  *
- *  Created on: Jun 14, 2016
- *      Author: spiri
- *
- *  Designed for TI-RTOS and tested on the CC1310 LaunchPad
- *
+ * @author Eric Brundick
+ * @date 2016
+ * @version 100
+ * @copyright (C) 2016 Eric Brundick spirilis at linux dot com
+ *  @n Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
+ *  @n (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
+ *  @n publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to
+ *  @n do so, subject to the following conditions:
+ *  @n
+ *  @n The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ *  @n
+ *  @n THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *  @n OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ *  @n BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+ *  @n OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *  @n
+ *  @n Parts of this codebase derive from BOSCH SENSORTEC calibration compensation example code and is provided by BOSCH with no
+ *  @n implied warranty.  The end-user assumes all responsibility for the performance of this codebase.
+ *  @n BOSCH SENSORTEC also states in their datasheet the end-user bears all risk for the use of this product and they do not consider
+ *  @n the product suitable for life-sustaining or security sensitive systems.
+ *  @n
+ *  @n A copy of the BME280 product datasheet may be found on BOSCH SENSORTEC's product page:
+ *  @n https://www.bosch-sensortec.com/bst/products/all_products/bme280
  */
 
 /* XDCtools Header files */
@@ -22,16 +43,25 @@
 #include "bme280.h"
 
 
+/// @brief Local persistent copy of the I2C Handle passed during BME280_init()
 static I2C_Handle i2cbus;
+/// @brief Local persistent copy of the I2C slave address specified during BME280_init()
 static Uint8 i2cAddr;
+/// @brief Local persistent copy of the BME280's unique calibration values discovered during BME280_open()
 static Uint8 _bme280_calibration[33];
 
+/// @brief Driver initialization
+/// @details Performed by user with a known-valid I2C_Handle and slave address
 Void BME280_init(I2C_Handle hand, Uint8 addr)
 {
 	i2cbus = hand;
 	i2cAddr = addr;
 }
 
+/// @brief Make contact with the chip and read calibration registers
+/// @details This function checks the CHIP_ID register to verify we're talking to a Bosch Sensortec BME280
+///          and then pulls the calibration constants into a local persistent buffer.
+/// @returns true if everything goes well, false if I2C communication fails or if the CHIP_ID is not correct.
 Bool BME280_open()
 {
 	I2C_Transaction txn;
@@ -68,12 +98,15 @@ Bool BME280_open()
 	return true;
 }
 
+/// @brief Will put the BME280 into sleep mode
 Bool BME280_close()
 {
 	// nothing actually to do here
+	// TODO: Actually, we should put CTRL_MEAS:mode[] bits into SLEEP mode in case it's set to NORMAL.
 	return true;
 }
 
+/// @brief Internal API call for setting the current memory pointer.  Not used anywhere though...
 Void BME280_setAddress(Uint8 memAddress)
 {
 	I2C_Transaction txn;
@@ -88,6 +121,7 @@ Void BME280_setAddress(Uint8 memAddress)
 	I2C_transfer(i2cbus, &txn);
 }
 
+/// @brief Write a single 8-bit value to a specified memory address
 Void BME280_writeReg(Uint8 memAddress, Uint8 value)
 {
 	I2C_Transaction txn;
@@ -105,6 +139,7 @@ Void BME280_writeReg(Uint8 memAddress, Uint8 value)
 	I2C_transfer(i2cbus, &txn);
 }
 
+/// @brief Read a single 8-bit value from the specified memory address
 Uint8 BME280_readReg(Uint8 memAddress)
 {
 	I2C_Transaction txn;
@@ -121,6 +156,7 @@ Uint8 BME280_readReg(Uint8 memAddress)
 	return rdBuf;
 }
 
+/// @brief Read a 16-bit value Big-Endian from the specified memory address
 Uint16 BME280_readWord(Uint8 memAddress)
 {
 	I2C_Transaction txn;
@@ -137,6 +173,7 @@ Uint16 BME280_readWord(Uint8 memAddress)
 	return ((Uint16)rdBuf[0] << 8) | (Uint16)rdBuf[1];
 }
 
+/// @brief Read a 20-bit (MSB/LSB/XLSB) Big-Endian value from the specified memory address
 Uint32 BME280_readWord20(Uint8 memAddress)
 {
 	I2C_Transaction txn;
@@ -153,7 +190,12 @@ Uint32 BME280_readWord20(Uint8 memAddress)
 	return ((Uint32)rdBuf[0] << 12) | ((Uint32)rdBuf[1] << 4) | ((Uint32)rdBuf[2] >> 4);
 }
 
+/// @brief Internal buffer used to hold last-known raw data
+/// @details When BME280_readMeasurements() returns a pointer to a BME280_RawData struct, it always
+///          returns a pointer to this buffer.
 static BME280_RawData _rawData;
+
+/// @brief Collect current data
 BME280_RawData * BME280_readMeasurements()
 {
 	I2C_Transaction txn;
@@ -176,6 +218,8 @@ BME280_RawData * BME280_readMeasurements()
 	return &_rawData;
 }
 
+/// @brief Initiate a Forced measurement, poll to completion, read & return raw data
+/// @details Runs BME280 in Forced mode with 4x oversampling, no IIR filter on Pressure.
 BME280_RawData * BME280_read()
 {
 	BME280_writeReg(BME280_REG_CTRL_HUM, BME280_CTRL_HUM_OSRS__4);
@@ -266,7 +310,10 @@ inline Int16 _bme280_compute_H5(Uint8 e5, Uint8 e6)
 /* These compensation equations are derived from BME280 datasheet pseudocode, page 23 & 24 */
 static Int32 _t_fine;
 
-// Output degrees Celsius with 0.01C resolution.  Divide by 100 for whole degrees.
+/// @brief Compute Temperature from BME280_RawData struct
+/// @details Output degrees Celsius with 0.01C resolution.  Divide by 100 for whole degrees.
+///          This function needs to be run before computing Pressure or Humidity to compute
+///          the _t_fine constant used by the Pressure and Humidity compensation functions below.
 Int32 BME280_compensated_Temperature(BME280_RawData *rd)
 {
 	Int32 adc_T = rd->temperature_raw; // No sign extension will be performed as the raw value is expected to be positive.
@@ -281,7 +328,8 @@ Int32 BME280_compensated_Temperature(BME280_RawData *rd)
 	return T;
 }
 
-// Pressure in Pascals as unsigned 32-bit integer in Q24.8 format; divide by 256 for whole Pascals
+/// @brief Compute Pressure from BME280_RawData struct
+/// @details Pressure in Pascals as unsigned 32-bit integer in Q24.8 format; divide by 256 for whole Pascals
 Uint32 BME280_compensated_Pressure(BME280_RawData *rd)
 {
 	Int32 adc_P = rd->pressure_raw; // No sign extension will be performed as the raw value is expected to be positive.
@@ -304,7 +352,8 @@ Uint32 BME280_compensated_Pressure(BME280_RawData *rd)
 	return (Uint32)p;
 }
 
-// Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
+/// @brief Compute Relative Humidity from BME280_RawData struct
+/// @details Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
 Uint32 BME280_compensated_Humidity(BME280_RawData *rd)
 {
 	Int32 adc_H = (Uint32)rd->humidity_raw; // No sign extension will be performed as the raw value is expected to be positive.

@@ -1,10 +1,32 @@
 /*
- * bme280.h
+ * @file bme280.h
+ * @brief BME280 Library Header
+ * @headerfile <>
+ * @details Bosch Sensortec BME280 driver library for TI-RTOS using I2C bus
  *
- *  Created on: Jun 14, 2016
- *      Author: spiri
- *
- *  Designed for TI-RTOS and tested on the CC1310 LaunchPad
+ * @author Eric Brundick
+ * @date 2016
+ * @version 100
+ * @copyright (C) 2016 Eric Brundick spirilis at linux dot com
+ *  @n Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
+ *  @n (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
+ *  @n publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to
+ *  @n do so, subject to the following conditions:
+ *  @n
+ *  @n The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ *  @n
+ *  @n THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *  @n OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ *  @n BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+ *  @n OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *  @n
+ *  @n Parts of this codebase derive from BOSCH SENSORTEC calibration compensation example code and is provided by BOSCH with no
+ *  @n implied warranty.  The end-user assumes all responsibility for the performance of this codebase.
+ *  @n BOSCH SENSORTEC also states in their datasheet the end-user bears all risk for the use of this product and they do not consider
+ *  @n the product suitable for life-sustaining or security sensitive systems.
+ *  @n
+ *  @n A copy of the BME280 product datasheet may be found on BOSCH SENSORTEC's product page:
+ *  @n https://www.bosch-sensortec.com/bst/products/all_products/bme280
  *
  */
 
@@ -14,9 +36,15 @@
 /* Bosch Sensortec BME280 API using TI Drivers I2C */
 #include <ti/drivers/I2C.h>
 
+/// @brief Default I2C Slave address for the BME280
 #define BOSCH_SENSORTEC_BME280_I2CSLAVE_DEFAULT 0x77
 
 /* Data types */
+/// @brief Holds raw register values for measurements
+/// @details This struct type is returned in pointer form by any BME280 API calls
+///          which pull measurement data from the device; it is used as a parameter
+///          for the compensation computation functions that derive usable values
+///          for the measurements.
 typedef struct {
 	Uint16 humidity_raw;
 	Uint32 temperature_raw;
@@ -24,21 +52,25 @@ typedef struct {
 } BME280_RawData;
 
 /* Basic API */
-Void BME280_init(I2C_Handle, Uint8 slaveaddr);
-Bool BME280_open();
-Bool BME280_close();
-BME280_RawData *BME280_read(); // Runs BME280 in Forced mode with 4x oversampling, no IIR filter on Pressure.
+Void BME280_init(I2C_Handle, Uint8 slaveaddr); /// @brief Driver initialization
+Bool BME280_open();                            /// @brief Make contact with the chip and read calibration registers
+Bool BME280_close();                           /// @brief Will put the BME280 into sleep mode
+BME280_RawData *BME280_read();                 /// @brief Initiate a Forced measurement, poll to completion, read & return raw data
 
 /* Numeric interpretation/compensation API for extracting results */
 
-// Output degrees Celsius with 0.01C resolution.  Divide by 100 for whole degrees.
-// **** This MUST be run once before Pressure or Humidity can be calculated! ****
+/// @brief Compute Temperature from BME280_RawData struct
+/// @details Output degrees Celsius with 0.01C resolution.  Divide by 100 for whole degrees.
+///          This function needs to be run before computing Pressure or Humidity to compute
+///          the _t_fine constant used by the Pressure and Humidity compensation functions below.
 Int32 BME280_compensated_Temperature(BME280_RawData *);
 
-// Pressure in Pascals as unsigned 32-bit integer in Q24.8 format; divide by 256 for whole Pascals
+/// @brief Compute Pressure from BME280_RawData struct
+/// @details Pressure in Pascals as unsigned 32-bit integer in Q24.8 format; divide by 256 for whole Pascals
 Uint32 BME280_compensated_Pressure(BME280_RawData *);
 
-// Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
+/// @brief Compute Relative Humidity from BME280_RawData struct
+/// @details Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
 Uint32 BME280_compensated_Humidity(BME280_RawData *);
 
 
