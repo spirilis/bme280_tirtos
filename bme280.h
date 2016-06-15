@@ -40,6 +40,10 @@
 /// @brief Default I2C Slave address for the BME280
 #define BOSCH_SENSORTEC_BME280_I2CSLAVE_DEFAULT 0x77
 
+// If this is defined, BME280_readMeasurements() will System_printf(".\r\n"); every time the
+// STATUS register is found to have MEASURING==1 or IM_UPDATE==1
+//#define BME280_DEBUG_STATUS_POLLING 1
+
 /* Data types */
 /// @brief Holds raw register values for measurements
 /// @details This struct type is returned in pointer form by any BME280 API calls
@@ -62,9 +66,11 @@ Bool BME280_close();                           /// @brief Reset chip
 BME280_RawData *BME280_read();                 /// @brief Initiate a Forced measurement, poll to completion, read & return raw data
 /// @brief Collect current data
 /// @details This will first poll the STATUS register to ascertain no measurements are in progress; if they are, it
-///          will perform Task_sleep(2) and poll again.  Since this uses Task_sleep(), this function must ALWAYS
+///          will perform Task_sleep() and poll again.  Since this uses Task_sleep(), this function must ALWAYS
 ///          be run within Task context e.g. not within a Swi or a Clock callback.
-BME280_RawData *BME280_readMeasurements();
+///          The STATUS register poll will start with a 2ms sleep and double the time until <timeout> is exceeded.
+///          When timeout = 0, it will poll infinitely.
+BME280_RawData *BME280_readMeasurements(Uint16 timeout);
 
 /* Numeric interpretation/compensation API for extracting results */
 

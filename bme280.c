@@ -207,12 +207,30 @@ static BME280_RawData _rawData;
 
 /// @brief Collect current data
 /// @details This will first poll the STATUS register to ascertain no measurements are in progress; if they are, it
-///          will perform Task_sleep(2) and poll again.  Since this uses Task_sleep(), this function must ALWAYS
+///          will perform Task_sleep() and poll again.  Since this uses Task_sleep(), this function must ALWAYS
 ///          be run within Task context e.g. not within a Swi or a Clock callback.
-BME280_RawData * BME280_readMeasurements()
+///          The STATUS register poll will start with a 2ms sleep and double the time until <timeout> is exceeded.
+///          When timeout = 0, it will poll infinitely.
+BME280_RawData * BME280_readMeasurements(Uint16 timeout)
 {
+	Uint16 status_delay = 2;
+	Uint32 total_delay = 0;
+
 	while (BME280_readReg(BME280_REG_STATUS) & (BME280_STATUS_MEASURING | BME280_STATUS_IM_UPDATE)) {
-		Task_sleep(2);  // Poll every 2ms until complete
+		#ifdef BME280_DEBUG_STATUS_POLLING
+		System_printf(".\r\n");
+		System_flush();
+		#endif
+		Task_sleep(status_delay);  // Poll until complete or timeout
+		total_delay += status_delay;
+		if (status_delay == 32768) {
+			status_delay = 0;
+		} else {
+			status_delay <<= 1;  // Double the poll time
+		}
+		if (timeout != 0 && total_delay > timeout) {
+			return NULL;
+		}
 	}
 
 	I2C_Transaction txn;
@@ -241,7 +259,7 @@ BME280_RawData * BME280_read()
 {
 	BME280_writeReg(BME280_REG_CTRL_MEAS, BME280_CTRL_MEAS_MODE_FORCED | _bme280_ctrl_meas);
 
-	return BME280_readMeasurements();
+	return BME280_readMeasurements(0);
 }
 
 /// @brief TI-RTOS Clock_FuncPtr used for NORMAL mode
