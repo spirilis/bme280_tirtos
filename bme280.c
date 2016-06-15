@@ -425,6 +425,9 @@ static Int32 _t_fine;
 ///          the _t_fine constant used by the Pressure and Humidity compensation functions below.
 Int32 BME280_compensated_Temperature(BME280_RawData *rd)
 {
+	if (rd == NULL) {
+		return -32768;
+	}
 	Int32 adc_T = rd->temperature_raw; // No sign extension will be performed as the raw value is expected to be positive.
 
 	Int32 var1, var2, T;
@@ -441,6 +444,9 @@ Int32 BME280_compensated_Temperature(BME280_RawData *rd)
 /// @details Pressure in Pascals as unsigned 32-bit integer in Q24.8 format; divide by 256 for whole Pascals
 Uint32 BME280_compensated_Pressure(BME280_RawData *rd)
 {
+	if (rd == NULL) {
+		return 0;
+	}
 	Int32 adc_P = rd->pressure_raw; // No sign extension will be performed as the raw value is expected to be positive.
 
 	Int64 var1, var2, p;
@@ -465,6 +471,9 @@ Uint32 BME280_compensated_Pressure(BME280_RawData *rd)
 /// @details Humidity in %relativehumidity as unsigned 32-bit integer in Q22.10 format; divide by 1024 for whole %RH
 Uint32 BME280_compensated_Humidity(BME280_RawData *rd)
 {
+	if (rd == NULL) {
+		return 0;
+	}
 	Int32 adc_H = (Uint32)rd->humidity_raw; // No sign extension will be performed as the raw value is expected to be positive.
 
 	Int32 v_x1_u32r;
