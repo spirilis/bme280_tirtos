@@ -210,7 +210,7 @@ static BME280_RawData _rawData;
 ///          will perform Task_sleep() and poll again.  Since this uses Task_sleep(), this function must ALWAYS
 ///          be run within Task context e.g. not within a Swi or a Clock callback.
 ///          The STATUS register poll will start with a 2ms sleep and double the time until <timeout> is exceeded.
-///          When timeout = 0, it will poll infinitely.
+///          When timeout = 0, it will poll indefinitely.
 BME280_RawData * BME280_readMeasurements(Uint16 timeout)
 {
 	Uint16 status_delay = 2;
