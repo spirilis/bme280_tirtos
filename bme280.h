@@ -40,9 +40,15 @@
 /// @brief Default I2C Slave address for the BME280
 #define BOSCH_SENSORTEC_BME280_I2CSLAVE_DEFAULT 0x77
 
-// If this is defined, BME280_readMeasurements() will System_printf(".\r\n"); every time the
-// STATUS register is found to have MEASURING==1 or IM_UPDATE==1
-//#define BME280_DEBUG_STATUS_POLLING 1
+/// @brief Time between RESET and communication ready (actually 2ms)
+#define BME280_RESET_SETTLING_TIME 3
+
+/// @details If this is defined, BME280_readMeasurements() will System_printf(".\r\n"); every time the
+///          STATUS register is found to have MEASURING==1 or IM_UPDATE==1
+#define BME280_DEBUG_STATUS_POLLING 1
+/// @details If this is defined, BME280_open() will report detailed errors using System_printf() for why
+///          it failed to open.
+#define BME280_DEBUG_OPEN 1
 
 /* Data types */
 /// @brief Holds raw register values for measurements
@@ -56,9 +62,6 @@ typedef struct {
 	Uint32 pressure_raw;
 } BME280_RawData;
 
-/// @brief Callback function for BME280_periodic() mode (see bottom of this header)
-typedef void(*BME280_Callback)(BME280_RawData *);
-
 /* Basic API */
 Void BME280_init(I2C_Handle, Uint8 slaveaddr); /// @brief Driver initialization
 Bool BME280_open();                            /// @brief Make contact with the chip and read calibration registers
@@ -68,8 +71,10 @@ BME280_RawData *BME280_read();                 /// @brief Initiate a Forced meas
 /// @details This will first poll the STATUS register to ascertain no measurements are in progress; if they are, it
 ///          will perform Task_sleep() and poll again.  Since this uses Task_sleep(), this function must ALWAYS
 ///          be run within Task context e.g. not within a Swi or a Clock callback.
-///          The STATUS register poll will start with a 2ms sleep and double the time until <timeout> is exceeded.
+///          The STATUS register poll will start with a <BME280_STATUS_MINIMUM_WAIT> millisecond sleep and double the time
+///          until <timeout> is exceeded.
 ///          When timeout = 0, it will poll indefinitely.
+#define BME280_STATUS_MINIMUM_WAIT 8
 BME280_RawData *BME280_readMeasurements(Uint16 timeout);
 
 /* Numeric interpretation/compensation API for extracting results */
@@ -131,8 +136,8 @@ Uint32 BME280_readWord20(Uint8 memAddress); // Interprets Big-Endian with four L
 #define BME280_CTRL_HUM_OSRS__8       (4)
 #define BME280_CTRL_HUM_OSRS__16      (5)
 
-#define BME280_STATUS_MEASURING 0x04
-#define BME280_STATUS_IM_UPDATE 0x01
+#define BME280_STATUS_MEASURING       (0x08)
+#define BME280_STATUS_IM_UPDATE       (0x01)
 
 #define BME280_CTRL_MEAS_OSRS_T_SKIPPED (0 << 5)
 #define BME280_CTRL_MEAS_OSRS_T__1      (1 << 5)
@@ -171,41 +176,5 @@ Uint32 BME280_readWord20(Uint8 memAddress); // Interprets Big-Endian with four L
 
 #define BME280_RESET_ASSERT (0xB6)
 
-/// @brief Enum for available periodic sensing timeframes
-typedef enum {
-	BME280_EVERY_62_5MS = BME280_CONFIG_STANDBY_TIME__62_5,
-	BME280_EVERY_125MS = BME280_CONFIG_STANDBY_TIME__125,
-	BME280_EVERY_250MS = BME280_CONFIG_STANDBY_TIME__250,
-	BME280_EVERY_500MS = BME280_CONFIG_STANDBY_TIME__500,
-	BME280_EVERY_1000MS = BME280_CONFIG_STANDBY_TIME__1000,
-	BME280_EVERY_10MS = BME280_CONFIG_STANDBY_TIME__10,
-	BME280_EVERY_20MS = BME280_CONFIG_STANDBY_TIME__20
-} BME280_Period;
-
-/// @brief Used internally to resolve BME280_Period enum to millisecond count
-inline static Uint16 BME280_period_to_millis(BME280_Period p) {
-	switch (p) {
-	case BME280_EVERY_62_5MS:
-		return 63;
-	case BME280_EVERY_125MS:
-		return 125;
-	case BME280_EVERY_250MS:
-		return 250;
-	case BME280_EVERY_500MS:
-		return 500;
-	case BME280_EVERY_1000MS:
-		return 1000;
-	case BME280_EVERY_10MS:
-		return 10;
-	case BME280_EVERY_20MS:
-		return 20;
-	default:
-		return 0;
-	}
-}
-
-/* Periodic "NORMAL" mode API */
-Semaphore_Handle BME280_periodic(BME280_Period);  /// @brief Initiate Normal (periodic) measurement mode
-Void BME280_stop();                               /// @brief Halt periodic operation
 
 #endif /* BME280_H_ */

@@ -68,46 +68,31 @@ void bme280_Example_Task(UArg arg0, UArg arg1)
     System_printf("Successfully initialized I2C driver.\r\n");
     System_flush();
 
-    // Semaphore used to indicate the BME280's periodic measurement is ready to read
-    Semaphore_Handle bmesem = NULL;
-
     // Init the BME280 API
     BME280_init(i2c, BOSCH_SENSORTEC_BME280_I2CSLAVE_DEFAULT);
     if (!BME280_open()) {
     	System_printf("ERROR opening BME280_open()\r\n");
     	System_flush();
     } else {
-    	// Configure periodic API
     	System_printf("BME280 opened; polling every 500ms\r\n");
     	System_flush();
-    	bmesem = BME280_periodic(BME280_EVERY_500MS);
     }
 
     while(1) {
-    	if (bmesem != NULL) {
 
-    		// Halt this task until next measurement is available...
-    		System_printf("Waiting for next measurement interval...\r\n");
-    		System_flush();
-    		Semaphore_pend(bmesem, BIOS_WAIT_FOREVER);
+		// Read & interpret results, spitting to CIO console
+		BME280_RawData *rd = BME280_read();
+		Int32 tempC = BME280_compensated_Temperature(rd);
+		sprintf(ubuf, "Temp: %d C (%d F), humidity: %d%%%%, Pressure: %u hPa\r\n", \
+						tempC / 100,
+						((tempC * 9) / 5) / 100 + 32,
+						BME280_compensated_Humidity(rd) / 1024,
+						(BME280_compensated_Pressure(rd) / 256) / 1000);
+		System_printf(ubuf);
+		System_flush();
 
-    		// Read & interpret results, spitting to CIO console
-    		BME280_RawData *rd = BME280_readMeasurements(0);  // This might hang temporarily if measurement is still in progress
-    		Int32 tempC = BME280_compensated_Temperature(rd);
-    		sprintf(ubuf, "Temp: %d C (%d F), humidity: %d%%, Pressure: %u hPa\r\n", \
-    				tempC / 100,
-    				((tempC * 9) / 5) / 100 + 32,
-    				BME280_compensated_Humidity(rd) / 1024,
-    				(BME280_compensated_Pressure(rd) / 256) / 1000);
-    		System_printf(ubuf);
-    		System_flush();
+		// Wait 500ms and poll again
+		Task_sleep(500);
 
-    	} else {
-
-    		System_printf("Nothing to do\r\n");
-    		System_flush();
-    		Task_sleep(1000);
-
-    	}
     }
 }
